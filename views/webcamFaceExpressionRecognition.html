@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <script type="text/javascript" src="js/face-api.min.js"></script>
+  <script type="text/javascript" src="js/commons.js"></script>
+  <script type="text/javascript" src="js/faceDetectionControls.js"></script>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
+  <script type="text/javascript" src="https://code.jquery.com/jquery-2.1.1.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/0.100.2/js/materialize.min.js"></script>
+  <script type="text/javascript" src="js/webcam.min.js"></script>
+</head>
+<body>
+  <nav>
+    <div class="nav-wrapper">
+      <img src="logo-guild-ai.png" />
+      <h1>AVI 1.0</h1>
+    </div>
+  </nav>
+
+  <div class="center-content page-container">
+
+    <div class="progress" id="loader">
+      <div class="indeterminate"></div>
+    </div>
+    <div style="position: relative" class="margin">
+      <video onloadedmetadata="onPlay(this)" id="inputVideo" autoplay muted playsinline></video>
+      <canvas id="overlay" />
+    </div>
+
+    <div class="row side-by-side">
+      <div id="my_camera">
+      </div>
+    </div>
+  </body>
+
+  <script>
+    let forwardTimes = []
+    let withBoxes = true
+
+    Webcam.set({
+      width: 640,
+      height: 480,
+      image_format: 'jpeg',
+      jpeg_quality: 90
+    });
+    Webcam.attach( '#overlay' );
+
+    function take_snapshot(expression) {
+      Webcam.snap( function(data_uri) {
+        let params = {};
+        let expressionFace = 0;
+
+        for (const property in expression) {
+          if (property === 'happy' && expression[property] > 0.90) {
+            console.log(`${property}: ${expression[property]}`);
+            expressionFace = expression[property];
+            params = {image: data_uri, expression: expression};
+          }
+        }
+        
+        document.getElementById('my_camera').innerHTML = '<h3>Hola</h3><br /><img src="'+data_uri+'"/>';
+        sendData(params);
+      });
+    }
+
+    async function sendData(params = {}) {
+      try {
+        const data = await postData('https://2nb3097406.execute-api.us-east-2.amazonaws.com/default/guildai-assistant-picture-upload', params);
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    async function postData(url = '', data = {}) {
+      const response = await fetch(url, {
+        method: 'POST', // *GET, POST, PUT, DELETE, etc.
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        referrer: 'no-referrer', // no-referrer, *client
+        body: JSON.stringify(data) // body data type must match "Content-Type" header
+      });
+      return await response.json(); // parses JSON response into native JavaScript objects
+    }
+
+    function onChangeHideBoundingBoxes(e) {
+      withBoxes = !$(e.target).prop('checked')
+    }
+
+    function updateTimeStats(timeInMs) {
+      forwardTimes = [timeInMs].concat(forwardTimes).slice(0, 30)
+      const avgTimeInMs = forwardTimes.reduce((total, t) => total + t) / forwardTimes.length
+      $('#time').val(`${Math.round(avgTimeInMs)} ms`)
+      $('#fps').val(`${faceapi.round(1000 / avgTimeInMs)}`)
+    }
+
+    async function onPlay() {
+      const videoEl = $('#inputVideo').get(0)
+
+      if(videoEl.paused || videoEl.ended || !isFaceDetectionModelLoaded())
+        return setTimeout(() => onPlay())
+
+      const options = getFaceDetectorOptions()
+      const ts = Date.now()
+      const result = await faceapi.detectSingleFace(videoEl, options).withFaceExpressions()
+
+      updateTimeStats(Date.now() - ts)
+
+      if (result) {
+        const canvas = $('#overlay').get(0)
+        const dims = faceapi.matchDimensions(canvas, videoEl, true)
+
+        const resizedResult = faceapi.resizeResults(result, dims)
+        const minConfidence = 0.05
+
+        if (withBoxes) {
+          faceapi.draw.drawDetections(canvas, resizedResult);
+          take_snapshot(resizedResult.expressions);
+          withBoxes = false;
+        }
+
+        faceapi.draw.drawFaceExpressions(canvas, resizedResult, minConfidence)
+      }
+
+      setTimeout(() => onPlay())
+    }
+
+    async function run() {
+      // load face detection and face expression recognition models
+      await changeFaceDetector(TINY_FACE_DETECTOR)
+      await faceapi.loadFaceExpressionModel('/')
+      changeInputSize(224)
+
+      // try to access users webcam and stream the images
+      // to the video element
+      const stream = await navigator.mediaDevices.getUserMedia({ video: {} })
+      const videoEl = $('#inputVideo').get(0)
+      videoEl.srcObject = stream
+    }
+
+    function updateResults() {}
+
+    $(document).ready(function() {
+      // renderNavBar('#navbar', 'webcam_face_expression_recognition')
+      initFaceDetectionControls()
+      run()
+    })
+  </script>
+</body>
+</html>
